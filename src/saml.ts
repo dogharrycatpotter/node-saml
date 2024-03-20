@@ -124,6 +124,7 @@ class SAML {
       callbackUrl: ctorOptions.callbackUrl,
       issuer: ctorOptions.issuer,
       audience: ctorOptions.audience ?? ctorOptions.issuer ?? "unknown_audience", // use issuer as default
+      destination: ctorOptions.destination ?? false,
       identifierFormat:
         ctorOptions.identifierFormat === undefined
           ? DEFAULT_IDENTIFIER_FORMAT
@@ -1122,6 +1123,15 @@ class SAML {
       if (audienceErr) throw audienceErr;
     }
 
+    if (this.options.destination !== false) {
+      const responseDoc: XMLOutput = await parseXml2JsFromString(samlResponseXml);
+      const destinationErr = this.checkDestinationValidityError(
+        this.options.destination,
+        responseDoc.Response.$.Destination,
+      );
+      if (destinationErr) throw destinationErr;
+    }
+
     const attributeStatement = assertion.AttributeStatement;
     if (attributeStatement) {
       const attributes: XMLOutput[] = [].concat(
@@ -1242,6 +1252,24 @@ class SAML {
       });
     if (errors.length > 0) {
       return errors[0];
+    }
+    return null;
+  }
+
+  protected checkDestinationValidityError(
+    expectedDestination: string,
+    receivedDestination: string,
+  ): Error | null {
+    if (!receivedDestination) {
+      return new Error("SAML response has no Destination");
+    }
+    if (expectedDestination !== receivedDestination) {
+      return new Error(
+        "SAML response destination mismatch. Expected: " +
+          expectedDestination +
+          " Received: " +
+          receivedDestination,
+      );
     }
     return null;
   }

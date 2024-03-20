@@ -164,6 +164,7 @@ export interface SamlOptions extends Partial<SamlSigningOptions>, MandatorySamlO
   passive: boolean;
   idpIssuer?: string;
   audience: string | false;
+  destination: string | false;
   scoping?: SamlScopingConfig;
   wantAssertionsSigned: boolean;
   wantAuthnResponseSigned: boolean;
