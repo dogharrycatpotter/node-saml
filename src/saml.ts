@@ -959,7 +959,9 @@ class SAML {
     this.verifyIssuer(doc.LogoutResponse);
     const inResponseTo = doc.LogoutResponse.$.InResponseTo;
     if (inResponseTo) {
-      return this.validateInResponseTo(inResponseTo);
+      await this.validateInResponseTo(inResponseTo);
+      await this.cacheProvider.removeAsync(inResponseTo);
+      return;
     }
 
     return;
