@@ -41,7 +41,7 @@ import {
 } from "./xml";
 import { keyInfoToPem, generateUniqueId } from "./crypto";
 import { dateStringToTimestamp, generateInstant } from "./date-time";
-import { signAuthnRequestPost } from "./saml-post-signing";
+import { signAuthnRequestPost, signLogoutRequestPost } from "./saml-post-signing";
 import { generateServiceProviderMetadata } from "./metadata";
 import { DEFAULT_IDENTIFIER_FORMAT, DEFAULT_WANT_ASSERTIONS_SIGNED } from "./constants";
 
@@ -145,6 +145,8 @@ class SAML {
           keyExpirationPeriodMs: ctorOptions.requestIdExpirationPeriodMs,
         }),
       logoutUrl: ctorOptions.logoutUrl ?? ctorOptions.entryPoint ?? "", // Default to Entry Point
+      wantLogoutResponseSigned: ctorOptions.wantLogoutResponseSigned ?? true,
+      logoutDestination: ctorOptions.logoutDestination ?? false,
       signatureAlgorithm: ctorOptions.signatureAlgorithm ?? "sha1", // sha1, sha256, or sha512
       authnRequestBinding: ctorOptions.authnRequestBinding ?? "HTTP-Redirect",
       generateUniqueId: ctorOptions.generateUniqueId ?? generateUniqueId,
@@ -1392,6 +1394,229 @@ class SAML {
       this.options.validateInResponseTo === ValidateInResponseTo.always ||
       (this.options.validateInResponseTo === ValidateInResponseTo.ifPresent && hasInResponseTo)
     );
+  }
+
+  async _generateLogoutRequestAsync(
+    this: SAML,
+    user: Profile,
+    isHttpPostBinding: boolean,
+  ): Promise<string> {
+    const id = this.options.generateUniqueId();
+    const instant = generateInstant();
+
+    const request = {
+      "samlp:LogoutRequest": {
+        "@xmlns:samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
+        "@xmlns:saml": "urn:oasis:names:tc:SAML:2.0:assertion",
+        "@ID": id,
+        "@Version": "2.0",
+        "@IssueInstant": instant,
+        "@Destination": this.options.logoutUrl,
+        "saml:Issuer": {
+          "@xmlns:saml": "urn:oasis:names:tc:SAML:2.0:assertion",
+          "#text": this.options.issuer,
+        },
+        "samlp:Extensions": {},
+        "saml:NameID": {
+          "@Format": user.nameIDFormat,
+          "#text": user.nameID,
+        },
+      },
+    } as LogoutRequestXML;
+
+    const samlLogoutRequestExtensions = this.options.samlLogoutRequestExtensions;
+    if (samlLogoutRequestExtensions != null) {
+      if (typeof samlLogoutRequestExtensions != "object") {
+        throw new TypeError("samlLogoutRequestExtensions should be Object");
+      }
+      request["samlp:LogoutRequest"]["samlp:Extensions"] = {
+        "@xmlns:samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
+        ...samlLogoutRequestExtensions,
+      };
+    } else {
+      delete request["samlp:LogoutRequest"]["samlp:Extensions"];
+    }
+
+    if (user.nameQualifier != null) {
+      request["samlp:LogoutRequest"]["saml:NameID"]["@NameQualifier"] = user.nameQualifier;
+    }
+
+    if (user.spNameQualifier != null) {
+      request["samlp:LogoutRequest"]["saml:NameID"]["@SPNameQualifier"] = user.spNameQualifier;
+    }
+
+    if (user.sessionIndex) {
+      request["samlp:LogoutRequest"]["saml2p:SessionIndex"] = {
+        "@xmlns:saml2p": "urn:oasis:names:tc:SAML:2.0:protocol",
+        "#text": user.sessionIndex,
+      };
+    }
+
+    if (this.mustValidateInResponseTo(true)) {
+      await this.cacheProvider.saveAsync(id, instant);
+    }
+
+    let stringRequest = buildXmlBuilderObject(request, false);
+    // TODO: maybe we should always sign here
+    if (isHttpPostBinding && isValidSamlSigningOptions(this.options)) {
+      stringRequest = signLogoutRequestPost(stringRequest, this.options);
+    }
+    return stringRequest;
+  }
+
+  async getLogoutMessageAsync(
+    user: Profile,
+    RelayState: string,
+    host?: string,
+    options?: AuthOptions,
+  ): Promise<querystring.ParsedUrlQueryInput> {
+    assertRequired(this.options.logoutUrl, "logoutUrl is required");
+
+    const request = await this._generateLogoutRequestAsync(user, true);
+    let buffer: Buffer;
+    if (this.options.skipRequestCompression) {
+      buffer = Buffer.from(request, "utf8");
+    } else {
+      buffer = await deflateRawAsync(request);
+    }
+
+    const operation = "logout";
+    const overrideParams = options ? options.additionalParams || {} : {};
+    const additionalParameters = this._getAdditionalParams(RelayState, operation, overrideParams);
+    const samlMessage: querystring.ParsedUrlQueryInput = {
+      SAMLRequest: buffer.toString("base64"),
+    };
+
+    Object.keys(additionalParameters).forEach((k) => {
+      samlMessage[k] = additionalParameters[k] || "";
+    });
+
+    return samlMessage;
+  }
+
+  async getLogoutFormAsync(
+    user: Profile,
+    RelayState: string,
+    host?: string,
+    options?: AuthOptions,
+  ): Promise<string> {
+    assertRequired(this.options.logoutUrl, "logoutUrl is required");
+
+    // The quoteattr() function is used in a context, where the result will not be evaluated by javascript
+    // but must be interpreted by an XML or HTML parser, and it must absolutely avoid breaking the syntax
+    // of an element attribute.
+    const quoteattr = function (
+      s:
+        | string
+        | number
+        | boolean
+        | undefined
+        | null
+        | readonly string[]
+        | readonly number[]
+        | readonly boolean[],
+      preserveCR?: boolean,
+    ) {
+      const preserveCRChar = preserveCR ? "&#13;" : "\n";
+      return (
+        ("" + s) // Forces the conversion to string.
+          .replace(/&/g, "&amp;") // This MUST be the 1st replacement.
+          .replace(/'/g, "&apos;") // The 4 other predefined entities, required.
+          .replace(/"/g, "&quot;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          // Add other replacements here for HTML only
+          // Or for XML, only if the named entities are defined in its DTD.
+          .replace(/\r\n/g, preserveCRChar) // Must be before the next replacement.
+          .replace(/[\r\n]/g, preserveCRChar)
+      );
+    };
+
+    const samlMessage = await this.getLogoutMessageAsync(user, RelayState, host, options);
+
+    const formInputs = Object.keys(samlMessage)
+      .map((k) => {
+        return '<input type="hidden" name="' + k + '" value="' + quoteattr(samlMessage[k]) + '" />';
+      })
+      .join("\r\n");
+
+    return [
+      "<!DOCTYPE html>",
+      "<html>",
+      "<head>",
+      '<meta charset="utf-8">',
+      '<meta http-equiv="x-ua-compatible" content="ie=edge">',
+      "</head>",
+      '<body onload="document.forms[0].submit()">',
+      "<noscript>",
+      "<p><strong>Note:</strong> Since your browser does not support JavaScript, you must press the button below once to proceed.</p>",
+      "</noscript>",
+      '<form method="post" action="' + encodeURI(this.options.logoutUrl) + '">',
+      formInputs,
+      '<input type="submit" value="Submit" />',
+      "</form>",
+      '<script>document.forms[0].style.display="none";</script>', // Hide the form if JavaScript is enabled
+      "</body>",
+      "</html>",
+    ].join("\r\n");
+  }
+
+  async validatePostLogoutResponseAsync(container: Record<string, string>): Promise<void> {
+    let xml: string;
+    let doc: Document;
+    let inResponseTo: string | null = null;
+
+    try {
+      xml = Buffer.from(container.SAMLResponse, "base64").toString("utf8");
+      doc = await parseDomFromString(xml);
+
+      const inResponseToNodes = xpath.selectAttributes(
+        doc,
+        "/*[local-name()='LogoutResponse']/@InResponseTo",
+      );
+
+      if (inResponseToNodes) {
+        inResponseTo = inResponseToNodes.length ? inResponseToNodes[0].nodeValue : null;
+
+        await this.validateInResponseTo(inResponseTo);
+        await this.cacheProvider.removeAsync(inResponseTo);
+      }
+      const pemFiles = await this.getKeyInfosAsPem();
+      // Check if this document has a valid top-level signature which applies to the entire XML document
+      let validSignature = false;
+      if (validateSignature(xml, doc.documentElement, pemFiles)) {
+        validSignature = true;
+      }
+
+      if (this.options.wantLogoutResponseSigned === true && validSignature === false) {
+        throw new Error("Invalid document signature");
+      }
+
+      const xmljsDoc: XMLOutput = await parseXml2JsFromString(xml);
+      const logoutResponse = xmljsDoc.LogoutResponse;
+      if (logoutResponse) {
+        const statusCode = logoutResponse.Status[0].StatusCode[0].$.Value;
+        if (statusCode !== "urn:oasis:names:tc:SAML:2.0:status:Success") {
+          throw new Error("Bad status code: " + statusCode);
+        }
+
+        this.verifyIssuer(logoutResponse);
+
+        if (this.options.logoutDestination !== false) {
+          const destinationErr = this.checkDestinationValidityError(
+            this.options.logoutDestination,
+            logoutResponse.$.Destination,
+          );
+          if (destinationErr) throw destinationErr;
+        }
+      }
+    } catch (err) {
+      debug("validatePostLogoutResponse resulted in an error: %s", err);
+      if (this.mustValidateInResponseTo(Boolean(inResponseTo))) {
+        await this.cacheProvider.removeAsync(inResponseTo);
+      }
+      throw err;
+    }
   }
 }
 

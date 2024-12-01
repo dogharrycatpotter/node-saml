@@ -121,6 +121,7 @@ export const generateServiceProviderMetadata = (
     metadata.EntityDescriptor.SPSSODescriptor.SingleLogoutService = {
       "@Binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
       "@Location": logoutCallbackUrl,
+      "@ResponseLocation": logoutCallbackUrl,
     };
   }
 

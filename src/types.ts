@@ -181,6 +181,8 @@ export interface SamlOptions extends Partial<SamlSigningOptions>, MandatorySamlO
   logoutUrl: string;
   additionalLogoutParams: Record<string, string>;
   logoutCallbackUrl?: string;
+  wantLogoutResponseSigned: boolean;
+  logoutDestination: string | false;
 
   // extras
   disableRequestAcsUrl: boolean;

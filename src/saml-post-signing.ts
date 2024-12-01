@@ -3,6 +3,8 @@ import { signXml } from "./xml";
 
 const authnRequestXPath =
   '/*[local-name(.)="AuthnRequest" and namespace-uri(.)="urn:oasis:names:tc:SAML:2.0:protocol"]';
+const logoutRequestXPath =
+  '/*[local-name(.)="LogoutRequest" and namespace-uri(.)="urn:oasis:names:tc:SAML:2.0:protocol"]';
 const issuerXPath =
   '/*[local-name(.)="Issuer" and namespace-uri(.)="urn:oasis:names:tc:SAML:2.0:assertion"]';
 
@@ -16,4 +18,8 @@ export function signSamlPost(
 
 export function signAuthnRequestPost(authnRequest: string, options: SamlSigningOptions): string {
   return signSamlPost(authnRequest, authnRequestXPath, options);
+}
+
+export function signLogoutRequestPost(logoutRequest: string, options: SamlSigningOptions): string {
+  return signSamlPost(logoutRequest, logoutRequestXPath, options);
 }
