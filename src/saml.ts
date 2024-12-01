@@ -394,8 +394,8 @@ class SAML {
     }
 
     if (user.sessionIndex) {
-      request["samlp:LogoutRequest"]["saml2p:SessionIndex"] = {
-        "@xmlns:saml2p": "urn:oasis:names:tc:SAML:2.0:protocol",
+      request["samlp:LogoutRequest"]["samlp:SessionIndex"] = {
+        "@xmlns:samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
         "#text": user.sessionIndex,
       };
     }
@@ -1446,8 +1446,8 @@ class SAML {
     }
 
     if (user.sessionIndex) {
-      request["samlp:LogoutRequest"]["saml2p:SessionIndex"] = {
-        "@xmlns:saml2p": "urn:oasis:names:tc:SAML:2.0:protocol",
+      request["samlp:LogoutRequest"]["samlp:SessionIndex"] = {
+        "@xmlns:samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
         "#text": user.sessionIndex,
       };
     }
