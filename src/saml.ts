@@ -1646,12 +1646,12 @@ class SAML {
   ): Promise<querystring.ParsedUrlQueryInput> {
     assertRequired(this.options.logoutResponseUrl, "logoutResponseUrl is required");
 
-    const request = await this._generateLogoutResponseAsync(samlLogoutRequest, true, true);
+    const response = await this._generateLogoutResponseAsync(samlLogoutRequest, true, true);
     let buffer: Buffer;
     if (this.options.skipRequestCompression) {
-      buffer = Buffer.from(request, "utf8");
+      buffer = Buffer.from(response, "utf8");
     } else {
-      buffer = await deflateRawAsync(request);
+      buffer = await deflateRawAsync(response);
     }
 
     const operation = "logout";
@@ -1796,13 +1796,13 @@ class SAML {
       }
 
       const xmljsDoc: XMLOutput = await parseXml2JsFromString(xml);
-      const LogoutRequest = xmljsDoc.LogoutRequest;
-      if (LogoutRequest) {
+      const logoutRequest = xmljsDoc.LogoutRequest;
+      if (logoutRequest) {
         const res = await this.processValidlySignedPostRequestAsync(xmljsDoc, doc);
         if (this.options.logoutRequestDestination !== false) {
           const destinationErr = this.checkDestinationValidityError(
             this.options.logoutRequestDestination,
-            LogoutRequest.$.Destination,
+            logoutRequest.$.Destination,
           );
           if (destinationErr) throw destinationErr;
         }
