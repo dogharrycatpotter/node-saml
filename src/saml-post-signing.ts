@@ -26,6 +26,9 @@ export function signLogoutRequestPost(logoutRequest: string, options: SamlSignin
   return signSamlPost(logoutRequest, logoutRequestXPath, options);
 }
 
-export function signLogoutResponsePost(logoutResponse: string, options: SamlSigningOptions): string {
+export function signLogoutResponsePost(
+  logoutResponse: string,
+  options: SamlSigningOptions,
+): string {
   return signSamlPost(logoutResponse, logoutResponseXPath, options);
 }

@@ -30,7 +30,7 @@ export interface CacheItem {
 }
 
 export interface CacheProvider {
-  saveAsync(key: string, value: string, opts?: { ttl: number; }): Promise<CacheItem | null>;
+  saveAsync(key: string, value: string, opts?: { ttl: number }): Promise<CacheItem | null>;
   getAsync(key: string): Promise<string | null>;
   removeAsync(key: string | null): Promise<string | null>;
 }

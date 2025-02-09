@@ -41,7 +41,11 @@ import {
 } from "./xml";
 import { keyInfoToPem, generateUniqueId } from "./crypto";
 import { dateStringToTimestamp, generateInstant } from "./date-time";
-import { signAuthnRequestPost, signLogoutRequestPost, signLogoutResponsePost } from "./saml-post-signing";
+import {
+  signAuthnRequestPost,
+  signLogoutRequestPost,
+  signLogoutResponsePost,
+} from "./saml-post-signing";
 import { generateServiceProviderMetadata } from "./metadata";
 import { DEFAULT_IDENTIFIER_FORMAT, DEFAULT_WANT_ASSERTIONS_SIGNED } from "./constants";
 
@@ -1624,7 +1628,7 @@ class SAML {
     this: SAML,
     samlLogoutRequest: Profile,
     success: boolean,
-    isHttpPostBinding: boolean
+    isHttpPostBinding: boolean,
   ) {
     let stringResponse = this._generateLogoutResponse(samlLogoutRequest, success);
     // TODO: maybe we should always sign here
@@ -1632,7 +1636,6 @@ class SAML {
       stringResponse = signLogoutResponsePost(stringResponse, this.options);
     }
     return stringResponse;
-
   }
 
   async getLogoutResponseMessageAsync(
@@ -1703,7 +1706,12 @@ class SAML {
       );
     };
 
-    const samlMessage = await this.getLogoutResponseMessageAsync(samlLogoutRequest, RelayState, host, options);
+    const samlMessage = await this.getLogoutResponseMessageAsync(
+      samlLogoutRequest,
+      RelayState,
+      host,
+      options,
+    );
 
     const formInputs = Object.keys(samlMessage)
       .map((k) => {
@@ -1732,10 +1740,14 @@ class SAML {
     ].join("\r\n");
   }
 
-  async validatePostLogoutRequestAsync(container: Record<string, string>, host?: string, options?: AuthOptions): Promise<{
+  async validatePostLogoutRequestAsync(
+    container: Record<string, string>,
+    host?: string,
+    options?: AuthOptions,
+  ): Promise<{
     profile: Profile;
     loggedOut: boolean;
-    body: string
+    body: string;
   }> {
     let xml: string;
     let doc: Document;
@@ -1746,23 +1758,29 @@ class SAML {
       xml = Buffer.from(container.SAMLResponse, "base64").toString("utf8");
       doc = await parseDomFromString(xml);
 
-      const idNodes = xpath.selectAttributes(
-        doc,
-        "/*[local-name()='LogoutResponse']/@ID",
-      );
+      const idNodes = xpath.selectAttributes(doc, "/*[local-name()='LogoutResponse']/@ID");
       const instantNodes = xpath.selectAttributes(
         doc,
         "/*[local-name()='LogoutResponse']/@IssueInstant",
       );
 
       if (this.options.validateLogoutRequestIdExpireMs > 0) {
-        if (idNodes && idNodes.length && idNodes[0].nodeValue && instantNodes && instantNodes.length && instantNodes[0].nodeValue) {
+        if (
+          idNodes &&
+          idNodes.length &&
+          idNodes[0].nodeValue &&
+          instantNodes &&
+          instantNodes.length &&
+          instantNodes[0].nodeValue
+        ) {
           id = idNodes[0].nodeValue;
           if (await this.cacheProvider.getAsync(id)) {
-            throw new Error('ID already exists');
+            throw new Error("ID already exists");
           }
           const instant = instantNodes[0].nodeValue;
-          await this.cacheProvider.saveAsync(id, instant, { ttl: this.options.validateLogoutRequestIdExpireMs });
+          await this.cacheProvider.saveAsync(id, instant, {
+            ttl: this.options.validateLogoutRequestIdExpireMs,
+          });
           isSaveId = true;
         }
       }
@@ -1788,8 +1806,13 @@ class SAML {
           );
           if (destinationErr) throw destinationErr;
         }
-        const body = await this.getLogoutResponseFormAsync(res.profile, container.RelayState, host, options);
-        return { ...res, body};
+        const body = await this.getLogoutResponseFormAsync(
+          res.profile,
+          container.RelayState,
+          host,
+          options,
+        );
+        return { ...res, body };
       } else {
         throw new Error("Unknown SAML response message");
       }
