@@ -1755,7 +1755,7 @@ class SAML {
     let isSaveId = false;
 
     try {
-      xml = Buffer.from(container.SAMLResponse, "base64").toString("utf8");
+      xml = Buffer.from(container.SAMLRequest, "base64").toString("utf8");
       doc = await parseDomFromString(xml);
 
       const idNodes = xpath.selectAttributes(doc, "/*[local-name()='LogoutResponse']/@ID");
