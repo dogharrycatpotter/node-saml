@@ -30,7 +30,7 @@ export interface CacheItem {
 }
 
 export interface CacheProvider {
-  saveAsync(key: string, value: string): Promise<CacheItem | null>;
+  saveAsync(key: string, value: string, opts?: { ttl: number; }): Promise<CacheItem | null>;
   getAsync(key: string): Promise<string | null>;
   removeAsync(key: string | null): Promise<string | null>;
 }
@@ -181,8 +181,12 @@ export interface SamlOptions extends Partial<SamlSigningOptions>, MandatorySamlO
   logoutUrl: string;
   additionalLogoutParams: Record<string, string>;
   logoutCallbackUrl?: string;
+  logoutResponseUrl?: string;
   wantLogoutResponseSigned: boolean;
-  logoutDestination: string | false;
+  wantLogoutRequestSigned: boolean;
+  logoutResponseDestination: string | false;
+  logoutRequestDestination: string | false;
+  validateLogoutRequestIdExpireMs: number;
 
   // extras
   disableRequestAcsUrl: boolean;
