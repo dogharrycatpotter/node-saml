@@ -1756,10 +1756,10 @@ class SAML {
       xml = Buffer.from(container.SAMLRequest, "base64").toString("utf8");
       doc = await parseDomFromString(xml);
 
-      const idNodes = xpath.selectAttributes(doc, "/*[local-name()='LogoutResponse']/@ID");
+      const idNodes = xpath.selectAttributes(doc, "/*[local-name()='LogoutRequest']/@ID");
       const instantNodes = xpath.selectAttributes(
         doc,
-        "/*[local-name()='LogoutResponse']/@IssueInstant",
+        "/*[local-name()='LogoutRequest']/@IssueInstant",
       );
 
       if (this.options.validateLogoutRequestIdExpireMs > 0) {
