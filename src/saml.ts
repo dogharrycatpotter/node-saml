@@ -359,6 +359,7 @@ class SAML {
     const request = {
       "samlp:LogoutRequest": {
         "@xmlns:samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
+        "@xmlns:saml": "urn:oasis:names:tc:SAML:2.0:assertion",
         "@ID": id,
         "@Version": "2.0",
         "@IssueInstant": instant,
@@ -422,6 +423,7 @@ class SAML {
     const request = {
       "samlp:LogoutResponse": {
         "@xmlns:samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
+        "@xmlns:saml": "urn:oasis:names:tc:SAML:2.0:assertion",
         "@ID": id,
         "@Version": "2.0",
         "@IssueInstant": instant,
