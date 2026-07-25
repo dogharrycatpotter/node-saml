@@ -12,7 +12,7 @@ import {
   AudienceRestrictionXML,
   CacheProvider,
   IdpCertCallback,
-  ErrorWithXmlStatus,
+  SamlStatusError,
   Profile,
   SamlOptions,
   SamlConfig,
@@ -34,6 +34,7 @@ import {
   buildXmlBuilderObject,
   decryptXml,
   getNameIdAsync,
+  getVerifiedXml,
   parseDomFromString,
   parseXml2JsFromString,
   validateSignature,
@@ -292,9 +293,7 @@ class SAML {
     }
 
     if (this.options.scoping != null) {
-      const scoping: XMLInput = {
-        "@xmlns:samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
-      };
+      const scoping: XMLInput = { "@xmlns:samlp": "urn:oasis:names:tc:SAML:2.0:protocol" };
 
       if (typeof this.options.scoping.proxyCount === "number") {
         scoping["@ProxyCount"] = this.options.scoping.proxyCount;
@@ -369,10 +368,7 @@ class SAML {
           "#text": this.options.issuer,
         },
         "samlp:Extensions": {},
-        "saml:NameID": {
-          "@Format": user.nameIDFormat,
-          "#text": user.nameID,
-        },
+        "saml:NameID": { "@Format": user.nameIDFormat, "#text": user.nameID },
       },
     } as LogoutRequestXML;
 
@@ -413,17 +409,13 @@ class SAML {
     const instant = generateInstant();
 
     const successStatus = {
-      "samlp:StatusCode": {
-        "@Value": "urn:oasis:names:tc:SAML:2.0:status:Success",
-      },
+      "samlp:StatusCode": { "@Value": "urn:oasis:names:tc:SAML:2.0:status:Success" },
     };
 
     const failStatus = {
       "samlp:StatusCode": {
         "@Value": "urn:oasis:names:tc:SAML:2.0:status:Requester",
-        "samlp:StatusCode": {
-          "@Value": "urn:oasis:names:tc:SAML:2.0:status:UnknownPrincipal",
-        },
+        "samlp:StatusCode": { "@Value": "urn:oasis:names:tc:SAML:2.0:status:UnknownPrincipal" },
       },
     };
 
@@ -475,12 +467,8 @@ class SAML {
     }
 
     const samlMessage: querystring.ParsedUrlQuery = request
-      ? {
-          SAMLRequest: base64,
-        }
-      : {
-          SAMLResponse: base64,
-        };
+      ? { SAMLRequest: base64 }
+      : { SAMLResponse: base64 };
     Object.keys(additionalParameters).forEach((k) => {
       samlMessage[k] = additionalParameters[k];
     });
@@ -554,9 +542,7 @@ class SAML {
     const operation = "authorize";
     const overrideParams = options ? options.additionalParams || {} : {};
     const additionalParameters = this._getAdditionalParams(RelayState, operation, overrideParams);
-    const samlMessage: querystring.ParsedUrlQueryInput = {
-      SAMLRequest: buffer.toString("base64"),
-    };
+    const samlMessage: querystring.ParsedUrlQueryInput = { SAMLRequest: buffer.toString("base64") };
 
     Object.keys(additionalParameters).forEach((k) => {
       samlMessage[k] = additionalParameters[k] || "";
@@ -579,12 +565,11 @@ class SAML {
       s:
         | string
         | number
+        | bigint
         | boolean
         | undefined
         | null
-        | readonly string[]
-        | readonly number[]
-        | readonly boolean[],
+        | readonly (string | number | bigint | boolean)[],
       preserveCR?: boolean,
     ) {
       const preserveCRChar = preserveCR ? "&#13;" : "\n";
@@ -690,6 +675,48 @@ class SAML {
     return this.pemFiles;
   }
 
+  // given actually signed XML, try to get the actual assertion used
+  protected async getSignedAssertion(signedXml: string): Promise<string | null> {
+    // case 1: Response signed
+    const verifiedDoc = await parseDomFromString(signedXml);
+    const rootNode = verifiedDoc.documentElement;
+
+    // case 1: response is a verified assertion
+    if (rootNode.localName === "Response") {
+      // try getting the Xml from the assertions
+      const assertions = xpath.selectElements(rootNode, "./*[local-name()='Assertion']");
+      // now we can process the assertion as an assertion
+      if (assertions.length == 1) {
+        return assertions[0].toString();
+      }
+      // encrypted assertion
+      const encryptedAssertions = xpath.selectElements(
+        rootNode,
+        "./*[local-name()='EncryptedAssertion']",
+      );
+
+      if (encryptedAssertions.length === 1) {
+        assertRequired(this.options.decryptionPvk, "No decryption key for encrypted SAML response");
+
+        const encryptedAssertionXml = encryptedAssertions[0].toString();
+
+        const decryptedXml = await decryptXml(encryptedAssertionXml, this.options.decryptionPvk);
+        const decryptedDoc = await parseDomFromString(decryptedXml);
+        const decryptedAssertion = decryptedDoc.documentElement;
+        if (decryptedAssertion.localName !== "Assertion") {
+          throw new Error("Invalid EncryptedAssertion content");
+        }
+
+        return decryptedAssertion.toString();
+      }
+    } else if (rootNode.localName === "Assertion") {
+      return rootNode.toString();
+    } else {
+      return null;
+    }
+    return null;
+  }
+
   async validatePostResponseAsync(
     container: Record<string, string>,
   ): Promise<{ profile: Profile | null; loggedOut: boolean }> {
@@ -713,8 +740,13 @@ class SAML {
       }
       const pemFiles = await this.getKeyInfosAsPem();
       // Check if this document has a valid top-level signature which applies to the entire XML document
-      let validSignature = false;
-      if (validateSignature(xml, doc.documentElement, pemFiles)) {
+      let validSignature = false; // Use `getVerifiedXml()` to collect the actual verified contents
+
+      const responseVerifiedXml = getVerifiedXml(xml, doc.documentElement, pemFiles);
+      let assertionVerifiedXml = null;
+      let decryptedAssertionVerifiedXml = null;
+
+      if (responseVerifiedXml) {
         validSignature = true;
       }
 
@@ -738,18 +770,12 @@ class SAML {
       }
 
       if (assertions.length == 1) {
-        if (
-          (this.options.wantAssertionsSigned || !validSignature) &&
-          !validateSignature(xml, assertions[0], pemFiles)
-        ) {
-          throw new Error("Invalid signature");
+        if (this.options.wantAssertionsSigned || !validSignature) {
+          assertionVerifiedXml = getVerifiedXml(xml, assertions[0], pemFiles);
+          if (!assertionVerifiedXml) {
+            throw new Error("Invalid signature");
+          }
         }
-
-        return await this.processValidlySignedAssertionAsync(
-          assertions[0].toString(),
-          xml,
-          inResponseTo,
-        );
       }
 
       if (encryptedAssertions.length == 1) {
@@ -765,22 +791,33 @@ class SAML {
         );
         if (decryptedAssertions.length != 1) throw new Error("Invalid EncryptedAssertion content");
 
-        if (
-          (this.options.wantAssertionsSigned || !validSignature) &&
-          !validateSignature(decryptedXml, decryptedAssertions[0], pemFiles)
-        ) {
-          throw new Error("Invalid signature from encrypted assertion");
+        if (this.options.wantAssertionsSigned || !validSignature) {
+          decryptedAssertionVerifiedXml = getVerifiedXml(
+            decryptedXml,
+            decryptedAssertions[0],
+            pemFiles,
+          );
+          if (decryptedAssertionVerifiedXml == null) {
+            throw new Error("Invalid signature from encrypted assertion");
+          }
         }
-
-        return await this.processValidlySignedAssertionAsync(
-          decryptedAssertions[0].toString(),
-          xml,
-          inResponseTo,
-        );
       }
 
       // If there's no assertion, fall back on xml2js response parsing for the status &
       //   LogoutResponse code.
+      // collect the verified XML's
+      const verifiedXml =
+        responseVerifiedXml || assertionVerifiedXml || decryptedAssertionVerifiedXml;
+
+      // double check that there is at least 1 assertion
+      if (verifiedXml && assertions.length + encryptedAssertions.length == 1) {
+        const signedAssertion = await this.getSignedAssertion(verifiedXml);
+
+        if (signedAssertion == null) {
+          throw new Error("Cannot obtain assertion from signed data");
+        }
+        return await this.processValidlySignedAssertionAsync(signedAssertion, xml, inResponseTo);
+      }
 
       const xmljsDoc = (await parseXml2JsFromString(xml)) as SamlResponseXmlJs;
       const response = xmljsDoc.Response;
@@ -819,7 +856,7 @@ class SAML {
                   msg = msgValues ? msgValues[0] : msg;
                 }
                 const statusXml = buildXml2JsObject("Status", status[0]);
-                throw new ErrorWithXmlStatus(
+                throw new SamlStatusError(
                   "SAML provider returned " + msgType + " error: " + msg,
                   statusXml,
                 );
@@ -992,8 +1029,8 @@ class SAML {
 
   protected async processValidlySignedAssertionAsync(
     this: SAML,
-    xml: string,
-    samlResponseXml: string,
+    xml: string, // assertion XML
+    samlResponseXml: string, // should be deprecated, this is unsigned
     inResponseTo: string | null,
   ): Promise<{ profile: Profile; loggedOut: boolean }> {
     let msg;
@@ -1361,11 +1398,7 @@ class SAML {
     decryptionCert: string | null,
     publicCerts?: string | string[] | null,
   ): string {
-    return generateServiceProviderMetadata({
-      ...this.options,
-      decryptionCert,
-      publicCerts,
-    });
+    return generateServiceProviderMetadata({ ...this.options, decryptionCert, publicCerts });
   }
 
   /**
